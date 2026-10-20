@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-const DefaultBaseURL = "https://api-next.ofauth.com"
+const DefaultBaseURL = "https://api.ofauth.com"
 
 // Config holds the client configuration
 type Config struct {
