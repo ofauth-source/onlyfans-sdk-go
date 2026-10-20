@@ -126,7 +126,6 @@ func defaultQuery(route string, fixtures map[string]string) url.Values {
 		route == "/subscriptions" ||
 		route == "/chats" ||
 		route == "/analytics/mass-messages/sent" ||
-		route == "/analytics/mass-messages/purchased" ||
 		route == "/earnings/transactions" ||
 		route == "/earnings/chargebacks" ||
 		route == "/promotions" ||

@@ -1290,199 +1290,6 @@ type GetAccessAnalyticsMassMessagesSentResponse struct {
 } `json:"items"`
 }
 
-// GetAccessAnalyticsMassMessagesPurchasedResponse represents the response for GetAccessAnalyticsMassMessagesPurchased
-type GetAccessAnalyticsMassMessagesPurchasedResponse struct {
-	HasMore bool `json:"hasMore"`
-	Items []struct {
-	Id float64 `json:"id"`
-	Date string `json:"date"`
-	ResponseType *string `json:"responseType,omitempty"`
-	Text string `json:"text"`
-	RawText *string `json:"rawText,omitempty"`
-	GiphyId *string `json:"giphyId,omitempty"`
-	IsFree *bool `json:"isFree,omitempty"`
-	IsMediaReady *bool `json:"isMediaReady,omitempty"`
-	MediaCount *float64 `json:"mediaCount,omitempty"`
-	Media []struct {
-	Id float64 `json:"id"`
-	Type string `json:"type"`
-	ConvertedToVideo bool `json:"convertedToVideo"`
-	CanView bool `json:"canView"`
-	HasError bool `json:"hasError"`
-	CreatedAt string `json:"createdAt"`
-	IsReady bool `json:"isReady"`
-	Duration *float64 `json:"duration,omitempty"`
-	ReleaseForms []struct {
-	Id float64 `json:"id"`
-	Name string `json:"name"`
-	PartnerSource string `json:"partnerSource"`
-	Type string `json:"type"`
-	User *struct {
-	View string `json:"view"`
-	Id float64 `json:"id"`
-	Name string `json:"name"`
-	Username string `json:"username"`
-	IsVerified bool `json:"isVerified"`
-	Avatar string `json:"avatar"`
-	AvatarThumbs struct {
-	C50 string `json:"c50"`
-	C144 string `json:"c144"`
-} `json:"avatarThumbs"`
-	IvStatus string `json:"ivStatus"`
-	IsFromGuest bool `json:"isFromGuest"`
-} `json:"user,omitempty"`
-} `json:"releaseForms"`
-	HasCustomPreview *bool `json:"hasCustomPreview,omitempty"`
-	VideoSources *struct {
-	N240 *string `json:"240,omitempty"`
-	N720 *string `json:"720,omitempty"`
-} `json:"videoSources,omitempty"`
-	Files *struct {
-	Full struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Size *float64 `json:"size,omitempty"`
-	Sources []struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Type *string `json:"type,omitempty"`
-} `json:"sources"`
-} `json:"full"`
-	Thumb *struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Size *float64 `json:"size,omitempty"`
-} `json:"thumb,omitempty"`
-	Preview *struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Size *float64 `json:"size,omitempty"`
-	Options []struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Type *string `json:"type,omitempty"`
-} `json:"options"`
-} `json:"preview,omitempty"`
-	SquarePreview *struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Size *float64 `json:"size,omitempty"`
-} `json:"squarePreview,omitempty"`
-} `json:"files,omitempty"`
-} `json:"media"`
-	Previews []struct {
-	Id float64 `json:"id"`
-	Type string `json:"type"`
-	ConvertedToVideo bool `json:"convertedToVideo"`
-	CanView bool `json:"canView"`
-	HasError bool `json:"hasError"`
-	CreatedAt string `json:"createdAt"`
-	IsReady bool `json:"isReady"`
-	Duration *float64 `json:"duration,omitempty"`
-	ReleaseForms []struct {
-	Id float64 `json:"id"`
-	Name string `json:"name"`
-	PartnerSource string `json:"partnerSource"`
-	Type string `json:"type"`
-	User *struct {
-	View string `json:"view"`
-	Id float64 `json:"id"`
-	Name string `json:"name"`
-	Username string `json:"username"`
-	IsVerified bool `json:"isVerified"`
-	Avatar string `json:"avatar"`
-	AvatarThumbs struct {
-	C50 string `json:"c50"`
-	C144 string `json:"c144"`
-} `json:"avatarThumbs"`
-	IvStatus string `json:"ivStatus"`
-	IsFromGuest bool `json:"isFromGuest"`
-} `json:"user,omitempty"`
-} `json:"releaseForms"`
-	HasCustomPreview *bool `json:"hasCustomPreview,omitempty"`
-	VideoSources *struct {
-	N240 *string `json:"240,omitempty"`
-	N720 *string `json:"720,omitempty"`
-} `json:"videoSources,omitempty"`
-	Files *struct {
-	Full struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Size *float64 `json:"size,omitempty"`
-	Sources []struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Type *string `json:"type,omitempty"`
-} `json:"sources"`
-} `json:"full"`
-	Thumb *struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Size *float64 `json:"size,omitempty"`
-} `json:"thumb,omitempty"`
-	Preview *struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Size *float64 `json:"size,omitempty"`
-	Options []struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Type *string `json:"type,omitempty"`
-} `json:"options"`
-} `json:"preview,omitempty"`
-	SquarePreview *struct {
-	Url string `json:"url"`
-	Width *float64 `json:"width,omitempty"`
-	Height *float64 `json:"height,omitempty"`
-	Size *float64 `json:"size,omitempty"`
-} `json:"squarePreview,omitempty"`
-} `json:"files,omitempty"`
-} `json:"previews"`
-	IsTip *bool `json:"isTip,omitempty"`
-	IsReportedByMe *bool `json:"isReportedByMe,omitempty"`
-	ViewedCount *float64 `json:"viewedCount,omitempty"`
-	SentCount *float64 `json:"sentCount,omitempty"`
-	IsCanceled *bool `json:"isCanceled,omitempty"`
-	ReleaseForms []struct {
-	Id float64 `json:"id"`
-	Name string `json:"name"`
-	PartnerSource string `json:"partnerSource"`
-	Type string `json:"type"`
-	User *struct {
-	View string `json:"view"`
-	Id float64 `json:"id"`
-	Name string `json:"name"`
-	Username string `json:"username"`
-	IsVerified bool `json:"isVerified"`
-	Avatar string `json:"avatar"`
-	AvatarThumbs struct {
-	C50 string `json:"c50"`
-	C144 string `json:"c144"`
-} `json:"avatarThumbs"`
-	IvStatus string `json:"ivStatus"`
-	IsFromGuest bool `json:"isFromGuest"`
-} `json:"user,omitempty"`
-} `json:"releaseForms"`
-	Template *string `json:"template,omitempty"`
-	CanUnsend *bool `json:"canUnsend,omitempty"`
-	UnsendSeconds *float64 `json:"unsendSeconds,omitempty"`
-	Price *string `json:"price,omitempty"`
-	PurchasedCount *float64 `json:"purchasedCount,omitempty"`
-	CanSendMessageToBuyers *bool `json:"canSendMessageToBuyers,omitempty"`
-} `json:"items"`
-}
-
 // ListAccessAnalyticsMassMessagesBuyersResponse represents the response for ListAccessAnalyticsMassMessagesBuyers
 type ListAccessAnalyticsMassMessagesBuyersResponse struct {
 	List []struct {
@@ -4455,6 +4262,9 @@ type VaultPlusPurgeResponse struct {
 	FreedBytes float64 `json:"freedBytes"`
 }
 
+// GetAccessMassMessagesScheduledResponse represents the response for GetAccessMassMessagesScheduled
+type GetAccessMassMessagesScheduledResponse map[string]interface{}
+
 
 // ============================================================================
 // API Methods
@@ -4996,25 +4806,6 @@ func (c *Client) GetAccessAnalyticsMassMessagesSent(ctx context.Context, opts *R
 	}
 
 	var result GetAccessAnalyticsMassMessagesSentResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
-	return &result, nil
-}
-
-// GetAccessAnalyticsMassMessagesPurchased Mass messages purchased
-func (c *Client) GetAccessAnalyticsMassMessagesPurchased(ctx context.Context, opts *RequestOptions) (*GetAccessAnalyticsMassMessagesPurchasedResponse, error) {
-	path := "/v2/access/analytics/mass-messages/purchased"
-	if opts == nil {
-		opts = &RequestOptions{}
-	}
-
-	respBody, err := c.Request(ctx, "GET", path, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	var result GetAccessAnalyticsMassMessagesPurchasedResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
@@ -6654,6 +6445,7 @@ func (c *Client) AccessUploadsComplete(ctx context.Context, body struct {
 
 // LinkInit Initialize a Link session
 func (c *Client) LinkInit(ctx context.Context, body struct {
+	ClientAppId *string `json:"clientAppId,omitempty"`
 	RedirectUrl *string `json:"redirectUrl,omitempty"`
 	ClientReferenceId *string `json:"clientReferenceId,omitempty"`
 	ConnectionId *string `json:"connectionId,omitempty"`
@@ -6898,6 +6690,25 @@ func (c *Client) VaultPlusPurge(ctx context.Context, connectionID string) (*Vaul
 	}
 
 	var result VaultPlusPurgeResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetAccessMassMessagesScheduled List scheduled mass messages
+func (c *Client) GetAccessMassMessagesScheduled(ctx context.Context, opts *RequestOptions) (*GetAccessMassMessagesScheduledResponse, error) {
+	path := "/v2/access/mass-messages/scheduled"
+	if opts == nil {
+		opts = &RequestOptions{}
+	}
+
+	respBody, err := c.Request(ctx, "GET", path, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	var result GetAccessMassMessagesScheduledResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}

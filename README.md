@@ -61,7 +61,7 @@ client := ofauth.NewClient("your-api-key").
 
 // Full configuration
 client := ofauth.NewClient("your-api-key").
-    WithBaseURL("https://api-next.ofauth.com").
+    WithBaseURL("https://api.ofauth.com").
     WithConnectionID("conn_xxx").
     WithHTTPClient(&http.Client{Timeout: 30 * time.Second})
 ```
