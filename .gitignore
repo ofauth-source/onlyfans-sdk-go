@@ -8,6 +8,7 @@ bin/
 *.out
 .DS_Store
 
+.env
+.env.*
 !.env.example
-config.bat
 node_modules
