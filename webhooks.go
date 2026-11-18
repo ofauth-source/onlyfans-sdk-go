@@ -1,231 +1,182 @@
 package ofauth
 
+// Webhook verification and routing.
+//
+// Deliveries follow Standard Webhooks (https://www.standardwebhooks.com): the
+// webhook-id, webhook-timestamp, and webhook-signature headers, with an
+// HMAC-SHA256 signature over "{id}.{timestamp}.{body}" keyed by the
+// destination's whsec_ secret. svix-* headers are accepted too.
+
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-// ============================================================================
-// Types
-// ============================================================================
+// DefaultWebhookTolerance is the maximum age of a delivery.
+const DefaultWebhookTolerance = 5 * time.Minute
 
-// WebhookVerificationError is returned when webhook signature verification fails.
+// Webhook verification error codes.
+const (
+	WebhookMissingHeaders          = "MISSING_HEADERS"
+	WebhookInvalidTimestamp        = "INVALID_TIMESTAMP"
+	WebhookTimestampOutOfTolerance = "TIMESTAMP_OUT_OF_TOLERANCE"
+	WebhookNoValidSignatures       = "NO_VALID_SIGNATURES"
+	WebhookSignatureMismatch       = "SIGNATURE_MISMATCH"
+	WebhookInvalidJSON             = "INVALID_JSON"
+)
+
+const webhookMaxBodyBytes = 5 << 20
+
+// WebhookVerificationError means the delivery failed verification. Respond
+// with 400 or 401 and do not process it.
 type WebhookVerificationError struct {
-	Message string
+	// Code is one of the Webhook* error code constants.
 	Code    string
+	Message string
 }
 
+// Error implements error.
 func (e *WebhookVerificationError) Error() string {
-	return fmt.Sprintf("webhook verification error [%s]: %s", e.Code, e.Message)
+	return "ofauth: webhook verification failed: " + e.Code + ": " + e.Message
 }
 
-// IsWebhookVerificationError checks if an error is a WebhookVerificationError.
-func IsWebhookVerificationError(err error) bool {
-	_, ok := err.(*WebhookVerificationError)
-	return ok
-}
-
-// WebhookHeaders holds the extracted Svix headers.
+// WebhookHeaders are the signature headers of one delivery.
 type WebhookHeaders struct {
-	SvixID        string
-	SvixTimestamp string
-	SvixSignature string
+	ID        string
+	Timestamp string
+	Signature string
 }
 
-// WebhookUserData represents user data from OnlyFans.
-type WebhookUserData struct {
-	UserID   string `json:"userId"`
-	Name     string `json:"name"`
-	Username string `json:"username"`
-	Avatar   string `json:"avatar"`
-}
-
-// WebhookConnection represents a connection object in webhook events.
-type WebhookConnection struct {
-	ID             string           `json:"id"`
-	PlatformUserID string           `json:"platformUserId"`
-	Status         string           `json:"status"`
-	UserData       *WebhookUserData `json:"userData,omitempty"`
-	Permissions    []string         `json:"permissions,omitempty"`
-}
-
-// WebhookDynamicRules represents dynamic rules configuration.
-type WebhookDynamicRules struct {
-	StaticParam      string `json:"static_param"`
-	Format           string `json:"format"`
-	Start            string `json:"start"`
-	End              string `json:"end"`
-	Prefix           string `json:"prefix"`
-	Suffix           string `json:"suffix"`
-	ChecksumConstant int    `json:"checksum_constant"`
-	ChecksumIndexes  []int  `json:"checksum_indexes"`
-	AppToken         string `json:"app_token"`
-	Revision         string `json:"revision"`
-}
-
-// WebhookEvent represents a raw webhook event with unparsed data.
-type WebhookEvent struct {
-	EventType string          `json:"eventType"`
-	Live      bool            `json:"live"`
-	Data      json.RawMessage `json:"data"`
-}
-
-// ConnectionCreatedEventData is the data payload for connection.created events.
-type ConnectionCreatedEventData struct {
-	Connection        WebhookConnection `json:"connection"`
-	ClientReferenceID *string           `json:"clientReferenceId"`
-}
-
-// ConnectionUpdatedEventData is the data payload for connection.updated events.
-type ConnectionUpdatedEventData struct {
-	Connection        WebhookConnection `json:"connection"`
-	ClientReferenceID *string           `json:"clientReferenceId"`
-}
-
-// ConnectionExpiredEventData is the data payload for connection.expired events.
-type ConnectionExpiredEventData struct {
-	Connection struct {
-		ID             string `json:"id"`
-		PlatformUserID string `json:"platformUserId"`
-		Status         string `json:"status"`
-	} `json:"connection"`
-	ClientReferenceID *string `json:"clientReferenceId"`
-}
-
-// RulesUpdatedEventData is the data payload for rules.updated events.
-type RulesUpdatedEventData struct {
-	Rules    WebhookDynamicRules `json:"rules"`
-	Revision string              `json:"revision"`
-}
-
-// ============================================================================
-// Verification
-// ============================================================================
-
-// ExtractWebhookHeaders extracts and validates Svix webhook headers from an HTTP request.
-func ExtractWebhookHeaders(r *http.Request) (*WebhookHeaders, error) {
-	svixID := r.Header.Get("svix-id")
-	svixTimestamp := r.Header.Get("svix-timestamp")
-	svixSignature := r.Header.Get("svix-signature")
-
-	if svixID == "" || svixTimestamp == "" || svixSignature == "" {
-		return nil, &WebhookVerificationError{
-			Message: "Missing required webhook headers (svix-id, svix-timestamp, svix-signature)",
-			Code:    "MISSING_HEADERS",
-		}
-	}
-
-	return &WebhookHeaders{
-		SvixID:        svixID,
-		SvixTimestamp: svixTimestamp,
-		SvixSignature: svixSignature,
-	}, nil
-}
-
-// ExtractWebhookHeadersFromMap extracts headers from a string map (useful for testing).
-func ExtractWebhookHeadersFromMap(headers map[string]string) (*WebhookHeaders, error) {
-	get := func(name string) string {
-		if v, ok := headers[name]; ok {
+// ExtractWebhookHeaders reads the webhook-* (or svix-*) headers.
+func ExtractWebhookHeaders(header http.Header) (WebhookHeaders, error) {
+	pick := func(primary, fallback string) string {
+		if v := header.Get(primary); v != "" {
 			return v
 		}
-		return headers[strings.ToLower(name)]
+		return header.Get(fallback)
 	}
-
-	svixID := get("svix-id")
-	svixTimestamp := get("svix-timestamp")
-	svixSignature := get("svix-signature")
-
-	if svixID == "" || svixTimestamp == "" || svixSignature == "" {
-		return nil, &WebhookVerificationError{
-			Message: "Missing required webhook headers (svix-id, svix-timestamp, svix-signature)",
-			Code:    "MISSING_HEADERS",
-		}
+	h := WebhookHeaders{
+		ID:        pick("webhook-id", "svix-id"),
+		Timestamp: pick("webhook-timestamp", "svix-timestamp"),
+		Signature: pick("webhook-signature", "svix-signature"),
 	}
-
-	return &WebhookHeaders{
-		SvixID:        svixID,
-		SvixTimestamp: svixTimestamp,
-		SvixSignature: svixSignature,
-	}, nil
+	if h.ID == "" || h.Timestamp == "" || h.Signature == "" {
+		return h, &WebhookVerificationError{Code: WebhookMissingHeaders, Message: "missing webhook-id, webhook-timestamp, or webhook-signature header"}
+	}
+	return h, nil
 }
 
-// VerifyWebhookSignature verifies a webhook signature using the Svix HMAC-SHA256 protocol.
-// tolerance is the maximum allowed timestamp age in seconds (use 0 for default of 300).
-func VerifyWebhookSignature(payload []byte, headers *WebhookHeaders, secret string, tolerance int) error {
+// WebhookEvent is a delivery's envelope with its data kept raw. Every event
+// (lifecycle and Realtime) has these fields; Data depends on Type. Use the
+// typed WebhookRouter.On* methods or DecodeData for the per-type structs.
+type WebhookEvent struct {
+	EventID       string `json:"eventId"`
+	Type          string `json:"type"`
+	SchemaVersion string `json:"schemaVersion"`
+	// Order increases per linked account. Apply events in order; deduplicate on EventID.
+	Order      int64  `json:"order"`
+	OccurredAt string `json:"occurredAt"`
+	// Environment is sandbox, test, or live.
+	Environment           string `json:"environment"`
+	IntegrationID         string `json:"integrationId"`
+	ExternalOAuthClientID string `json:"externalOauthClientId"`
+	AuthorizationID       string `json:"authorizationId"`
+	// LinkedAccountID is nil for authorization.* events.
+	LinkedAccountID *string         `json:"linkedAccountId"`
+	Test            bool            `json:"test"`
+	Data            json.RawMessage `json:"data"`
+	// Raw is the whole delivery body.
+	Raw json.RawMessage `json:"-"`
+}
+
+// DecodeData decodes the event's data into v (e.g. *RealtimeChatMessageReceivedData).
+func (e *WebhookEvent) DecodeData(v any) error {
+	return json.Unmarshal(e.Data, v)
+}
+
+// IsLifecycle reports whether this is an authorization.* or linked_account.* event.
+func (e *WebhookEvent) IsLifecycle() bool {
+	return strings.HasPrefix(e.Type, "authorization.") || strings.HasPrefix(e.Type, "linked_account.")
+}
+
+// VerifyWebhookSignature verifies a delivery's signature against the raw body.
+// tolerance <= 0 uses DefaultWebhookTolerance.
+func VerifyWebhookSignature(payload []byte, headers WebhookHeaders, secret string, tolerance time.Duration) error {
+	return verifyAt(payload, headers, secret, tolerance, time.Now())
+}
+
+func verifyAt(payload []byte, headers WebhookHeaders, secret string, tolerance time.Duration, now time.Time) error {
 	if tolerance <= 0 {
-		tolerance = 300
+		tolerance = DefaultWebhookTolerance
 	}
-
-	// Timestamp check
-	ts, err := strconv.ParseInt(headers.SvixTimestamp, 10, 64)
+	ts, err := strconv.ParseInt(headers.Timestamp, 10, 64)
 	if err != nil {
-		return &WebhookVerificationError{Message: "Invalid timestamp format", Code: "INVALID_TIMESTAMP"}
+		return &WebhookVerificationError{Code: WebhookInvalidTimestamp, Message: "invalid webhook-timestamp"}
 	}
-	now := time.Now().Unix()
-	if math.Abs(float64(now-ts)) > float64(tolerance) {
-		return &WebhookVerificationError{Message: "Webhook timestamp too old", Code: "TIMESTAMP_TOO_OLD"}
-	}
-
-	// Compute expected signature
-	cleanSecret := secret
-	if strings.HasPrefix(secret, "whsec_") {
-		cleanSecret = secret[6:]
-	}
-	key, err := base64.StdEncoding.DecodeString(cleanSecret)
-	if err != nil {
-		return &WebhookVerificationError{Message: "Invalid webhook secret", Code: "INVALID_SECRET"}
+	if math.Abs(float64(now.Unix()-ts)) > tolerance.Seconds() {
+		return &WebhookVerificationError{Code: WebhookTimestampOutOfTolerance, Message: "webhook timestamp is outside the tolerance"}
 	}
 
-	signed := fmt.Sprintf("%s.%s.%s", headers.SvixID, headers.SvixTimestamp, string(payload))
-	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte(signed))
-	expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
-
-	// Parse provided signatures
-	var validSigs []string
-	for _, part := range strings.Split(headers.SvixSignature, " ") {
-		pieces := strings.SplitN(part, ",", 2)
-		if len(pieces) == 2 && pieces[0] == "v1" {
-			validSigs = append(validSigs, pieces[1])
+	var signatures []string
+	for _, entry := range strings.Split(headers.Signature, " ") {
+		version, value, ok := strings.Cut(entry, ",")
+		if ok && version == "v1" && value != "" {
+			signatures = append(signatures, value)
 		}
 	}
-
-	if len(validSigs) == 0 {
-		return &WebhookVerificationError{Message: "No valid v1 signatures found", Code: "NO_VALID_SIGNATURES"}
+	if len(signatures) == 0 {
+		return &WebhookVerificationError{Code: WebhookNoValidSignatures, Message: "no v1 signature in webhook-signature"}
 	}
 
-	// Constant-time comparison
-	expectedBytes := []byte(expected)
-	for _, sig := range validSigs {
-		if subtle.ConstantTimeCompare(expectedBytes, []byte(sig)) == 1 {
+	key, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_"))
+	if err != nil {
+		return &WebhookVerificationError{Code: WebhookSignatureMismatch, Message: "webhook secret is not valid base64"}
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(headers.ID + "." + headers.Timestamp + "."))
+	mac.Write(payload)
+	expected := []byte(base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+	for _, signature := range signatures {
+		if hmac.Equal([]byte(signature), expected) {
 			return nil
 		}
 	}
-
-	return &WebhookVerificationError{Message: "Signature verification failed", Code: "SIGNATURE_MISMATCH"}
+	return &WebhookVerificationError{Code: WebhookSignatureMismatch, Message: "webhook signature does not match"}
 }
 
-// VerifyWebhookPayload verifies a webhook and returns the parsed event.
-func VerifyWebhookPayload(payload []byte, headers *WebhookHeaders, secret string, tolerance int) (*WebhookEvent, error) {
+// VerifyWebhook verifies a delivery and parses its envelope. Pass the raw
+// body exactly as received. tolerance <= 0 uses DefaultWebhookTolerance.
+//
+//	body, _ := io.ReadAll(r.Body)
+//	event, err := ofauth.VerifyWebhook(body, r.Header, os.Getenv("OFAUTH_WEBHOOK_SECRET"), 0)
+func VerifyWebhook(payload []byte, header http.Header, secret string, tolerance time.Duration) (*WebhookEvent, error) {
+	headers, err := ExtractWebhookHeaders(header)
+	if err != nil {
+		return nil, err
+	}
 	if err := VerifyWebhookSignature(payload, headers, secret, tolerance); err != nil {
 		return nil, err
 	}
+	return parseWebhookEvent(payload)
+}
 
+func parseWebhookEvent(payload []byte) (*WebhookEvent, error) {
 	var event WebhookEvent
 	if err := json.Unmarshal(payload, &event); err != nil {
-		return nil, &WebhookVerificationError{Message: "Failed to parse webhook payload as JSON", Code: "INVALID_JSON"}
+		return nil, &WebhookVerificationError{Code: WebhookInvalidJSON, Message: "webhook body is not valid JSON"}
 	}
-
+	event.Raw = append(json.RawMessage(nil), payload...)
 	return &event, nil
 }
 
@@ -233,152 +184,116 @@ func VerifyWebhookPayload(payload []byte, headers *WebhookHeaders, secret string
 // Router
 // ============================================================================
 
-// WebhookHandlerFunc handles a verified webhook event.
-type WebhookHandlerFunc func(event *WebhookEvent) error
+// WebhookHandler handles one verified event.
+type WebhookHandler func(ctx context.Context, event *WebhookEvent) error
 
-// WebhookErrorHandlerFunc handles errors during webhook processing.
-type WebhookErrorHandlerFunc func(err error, event *WebhookEvent)
-
-// RouterOption configures a WebhookRouter.
-type RouterOption func(*WebhookRouter)
-
-// WithTolerance sets the timestamp tolerance in seconds.
-func WithTolerance(seconds int) RouterOption {
-	return func(r *WebhookRouter) {
-		r.tolerance = seconds
-	}
-}
-
-// WebhookRouter routes verified webhook events to registered handlers.
+// WebhookRouter verifies deliveries and dispatches them by Type. It
+// implements http.Handler: 200 on success, 401 {"error": code} on failed
+// verification, 500 {"error": "handler_failed"} when a handler fails.
+//
+// Deduplicate on EventID, and apply events per LinkedAccountID in Order:
+// retried deliveries can arrive out of order.
+//
+//	router := ofauth.NewWebhookRouter(os.Getenv("OFAUTH_WEBHOOK_SECRET"))
+//	router.OnAuthorizationRevoked(func(ctx context.Context, e *ofauth.LifecycleAuthorizationRevokedEnvelope) error {
+//		return deleteTokens(e.AuthorizationID)
+//	})
+//	http.Handle("/webhooks/ofauth", router)
 type WebhookRouter struct {
+	mu             sync.RWMutex
 	secret         string
-	tolerance      int
-	handlers       map[string]WebhookHandlerFunc
-	defaultHandler WebhookHandlerFunc
-	errorHandler   WebhookErrorHandlerFunc
+	tolerance      time.Duration
+	handlers       map[string]WebhookHandler
+	defaultHandler WebhookHandler
 }
 
-// NewWebhookRouter creates a new WebhookRouter.
-func NewWebhookRouter(secret string, opts ...RouterOption) *WebhookRouter {
-	r := &WebhookRouter{
-		secret:    secret,
-		tolerance: 300,
-		handlers:  make(map[string]WebhookHandlerFunc),
-	}
-	for _, opt := range opts {
-		opt(r)
-	}
-	return r
+// NewWebhookRouter returns a router for the destination's whsec_ signing secret.
+func NewWebhookRouter(secret string) *WebhookRouter {
+	return &WebhookRouter{secret: secret, handlers: map[string]WebhookHandler{}}
 }
 
-// On registers a handler for a specific event type.
-func (r *WebhookRouter) On(eventType string, handler WebhookHandlerFunc) *WebhookRouter {
+// On handles one event type (see the Event* constants).
+func (r *WebhookRouter) On(eventType string, handler WebhookHandler) *WebhookRouter {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.handlers[eventType] = handler
 	return r
 }
 
-// OnDefault registers a default handler for unmatched event types.
-func (r *WebhookRouter) OnDefault(handler WebhookHandlerFunc) *WebhookRouter {
+// OnDefault handles events without a specific handler.
+func (r *WebhookRouter) OnDefault(handler WebhookHandler) *WebhookRouter {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.defaultHandler = handler
 	return r
 }
 
-// OnError registers an error handler.
-func (r *WebhookRouter) OnError(handler WebhookErrorHandlerFunc) *WebhookRouter {
-	r.errorHandler = handler
-	return r
-}
-
-// HandleRequest verifies and routes a webhook from an HTTP request.
-func (r *WebhookRouter) HandleRequest(w http.ResponseWriter, req *http.Request) {
-	headers, err := ExtractWebhookHeaders(req)
-	if err != nil {
-		r.respondError(w, err)
-		return
-	}
-
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		r.respondError(w, &WebhookVerificationError{Message: "Failed to read request body", Code: "READ_ERROR"})
-		return
-	}
-
-	event, err := VerifyWebhookPayload(body, headers, r.secret, r.tolerance)
-	if err != nil {
-		r.respondError(w, err)
-		return
-	}
-
-	if procErr := r.processEvent(event); procErr != nil {
-		if r.errorHandler != nil {
-			r.errorHandler(procErr, event)
-		}
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Internal server error"))
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
-}
-
-// ServeHTTP implements the http.Handler interface.
-func (r *WebhookRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	r.HandleRequest(w, req)
-}
-
-// UpdateSecret updates the webhook secret at runtime.
-func (r *WebhookRouter) UpdateSecret(secret string) {
+// SetSecret rotates the signing secret.
+func (r *WebhookRouter) SetSecret(secret string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.secret = secret
 }
 
-// UpdateTolerance updates the timestamp tolerance at runtime.
-func (r *WebhookRouter) UpdateTolerance(tolerance int) {
+// SetTolerance sets the maximum delivery age (default DefaultWebhookTolerance).
+func (r *WebhookRouter) SetTolerance(tolerance time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.tolerance = tolerance
 }
 
-func (r *WebhookRouter) processEvent(event *WebhookEvent) error {
-	handler, ok := r.handlers[event.EventType]
+// Handle verifies and dispatches a raw delivery and returns the event.
+func (r *WebhookRouter) Handle(ctx context.Context, payload []byte, header http.Header) (*WebhookEvent, error) {
+	r.mu.RLock()
+	secret, tolerance := r.secret, r.tolerance
+	r.mu.RUnlock()
+	event, err := VerifyWebhook(payload, header, secret, tolerance)
+	if err != nil {
+		return nil, err
+	}
+	return event, r.Dispatch(ctx, event)
+}
+
+// Dispatch runs the handler for an already verified event.
+func (r *WebhookRouter) Dispatch(ctx context.Context, event *WebhookEvent) error {
+	r.mu.RLock()
+	handler, ok := r.handlers[event.Type]
 	if !ok {
 		handler = r.defaultHandler
 	}
+	r.mu.RUnlock()
 	if handler == nil {
 		return nil
 	}
-
-	if err := handler(event); err != nil {
-		if r.errorHandler != nil {
-			r.errorHandler(err, event)
-			return nil // Error was handled
-		}
-		return err
-	}
-	return nil
+	return handler(ctx, event)
 }
 
-func (r *WebhookRouter) respondError(w http.ResponseWriter, err error) {
-	if r.errorHandler != nil {
-		r.errorHandler(err, nil)
-	}
-
-	if wvErr, ok := err.(*WebhookVerificationError); ok {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": wvErr.Message,
-			"code":  wvErr.Code,
-		})
+// ServeHTTP verifies and dispatches a delivery.
+func (r *WebhookRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		writeWebhookJSON(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
-
-	w.WriteHeader(http.StatusInternalServerError)
-	w.Write([]byte("Internal server error"))
+	body, err := io.ReadAll(http.MaxBytesReader(w, req.Body, webhookMaxBodyBytes))
+	if err != nil {
+		writeWebhookJSON(w, http.StatusBadRequest, "invalid_body")
+		return
+	}
+	if _, err := r.Handle(req.Context(), body, req.Header); err != nil {
+		var verr *WebhookVerificationError
+		if errors.As(err, &verr) {
+			writeWebhookJSON(w, http.StatusUnauthorized, verr.Code)
+			return
+		}
+		writeWebhookJSON(w, http.StatusInternalServerError, "handler_failed")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
-// ParseEventData is a helper to unmarshal event.Data into a typed struct.
-//
-//	var data ConnectionCreatedEventData
-//	if err := ParseEventData(event, &data); err != nil { ... }
-func ParseEventData(event *WebhookEvent, target interface{}) error {
-	return json.Unmarshal(event.Data, target)
+func writeWebhookJSON(w http.ResponseWriter, status int, code string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": code})
 }
